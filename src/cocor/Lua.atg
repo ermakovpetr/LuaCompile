@@ -1,0 +1,144 @@
+/* Lua 5.1 grammar for Coco/R */
+
+COMPILER Lua
+
+/* return true, if lookahead token is _Name and next token is _Equal */
+bool IsNameAndEql()
+{
+    scanner->ResetPeek();
+    Token* next = scanner->Peek();
+    return la->kind == _Name && next->kind == _Eql;
+}
+
+/* return true, if lookahead token is _Comma and next token is _Name */
+bool IsCommaAndName()
+{
+    scanner->ResetPeek();
+    Token* next = scanner->Peek();
+    return la->kind == _Comma && next->kind == _Name;
+}
+
+/* resolve LL(1) conflict in "stat" production */
+bool IsCommaOrEql()
+{
+    scanner->ResetPeek();
+    Token* next = scanner->Peek();
+    if (next->kind == _Slb)
+    {    
+        int i = 0;
+        while (next->kind != _EOF)
+        {
+            if (next->kind == _Slb) i++;
+            else if (next->kind == _Srb) i--;
+            if (i == 0) break;
+            next = scanner->Peek();
+        }
+        next = scanner->Peek();
+        return next->kind == _Comma || next->kind == _Eql || next->kind == _Slb;
+    }
+    if (next->kind == _Point)
+    {
+        next = scanner->Peek();
+        if (next->kind == _Name)
+        {
+            next = scanner->Peek();
+            return next->kind == _Comma || next->kind == _Eql;
+        }
+        return false;
+    }
+    return next->kind == _Comma || next->kind == _Eql;
+}
+
+CHARACTERS
+    uletter = 'A' .. 'Z'.
+    lletter = 'a' .. 'z'.
+    letter = uletter + lletter.                                           /* Все буквы */
+    digit = "0123456789".                                                 /* Все цифры */
+    hexdigital = digit + "abcdef".                          /* Шестнадцатиричные цифры */
+    nodigit = ANY - digit.                                             /* Все не цифры */
+    underline  = '_'.                                          /* Нижнее подчеркивание */
+    cr  = '\r'.                                                     /* Возврат каретки */
+    lf  = '\n'.                                                      /* Перевод строки */
+    tab = '\t'.                                                    /* Символ табуляции */
+    ctrlesc = '\a'+'\b'+'\f'+'\n'+'\r'+'\t'+'\v'+'\\'+'\"'+'\''.
+    instring1 = ANY - '\"'.
+    instring2 = ANY - '\''.
+    anychar = ANY.
+
+TOKENS
+    Name    = (letter | underline) {letter | underline | digit}.
+    Int     = digit {digit}.
+    Float   = digit {digit} '.' digit {digit}.
+    Expnum  = digit {digit} ['.' digit {digit}] ('e' | 'E') ['-'] digit {digit}.  
+    Hex     = "0x" hexdigital {hexdigital}.
+    Normalstring = ('\"' {instring1 | "\\\""} '\"') | ('\'' {instring2 | "\\\'"} '\'').
+    Longstring = '[' {'='} '[' {anychar} ']' {'='} ']'.
+    Eql  = '='.
+    Comma = ','.
+    Point = '.'.
+    Colon = ':'.
+    Semicolon = ';'.
+    Slb = '['.
+    Srb = ']'.    
+    Rlb = '('.
+    Rrb = ')'.    
+    Flb = '{'.
+    Frb = '}'.
+
+COMMENTS FROM "-[" TO "]]" NESTED      /* Комментарий должен начинаться с --[[ */
+COMMENTS FROM "--" TO cr lf
+COMMENTS FROM "--" TO lf
+
+IGNORE '\t' .. '\r'
+
+PRODUCTIONS
+    Lua = Chunk.
+    Chunk = {Stat [';']} [Laststat [';']].
+    Block = Chunk.
+    Stat = IF (IsCommaOrEql())
+           Varlist '=' Explist |
+           Functioncall |
+           "do" Block "end" |
+           "while" Exp "do" Block "end" |
+           "repeat" Block "until" Exp |
+           "if" Exp "then" Block {"elseif" Exp "then" Block} ["else" Block] "end" |
+           "for" Name ('=' Exp ',' Exp [',' Exp] "do" Block "end" | {',' Name} "in" Explist "do" Block "end") |
+           "function" Funcname Funcbody |
+           "local" ("function" Name Funcbody | Namelist ['=' Explist]).           
+    Laststat = "return" [Explist] | "break".
+    Varlist = Var {',' Var}.
+    Explist = Exp {',' Exp}.
+    Exp = Exp1 {Binop Exp1}.
+    Exp1 = Exp2 | Unop Exp2.
+    Exp2 = "nil" | "false" | "true" | Number | String | "..." | Function | Prefixexp | Tableconstructor.                
+    
+    Var = Name  {'[' Exp ']' | '.' Name}.
+    Functioncall = (Name | '(' Exp ')') Prefixexp2 [':' Name] Args.          
+    Prefixexp = (Name | '(' Exp ')') Prefixexp1.
+    Prefixexp1 = [':' Name] Args | ('[' Exp ']' Prefixexp1 | '.' Name Prefixexp1) |.
+    Prefixexp2 = ('[' Exp ']' | '.' Name Prefixexp2) |.
+    
+    Function = "function" Funcbody.
+    Funcname = Name {'.' Name} [':' Name].    
+    Funcbody = '(' [Parlist] ')' Block "end".
+    Namelist = Name {',' Name}.
+    Parlist = Name Parlist1 | "...".
+    Parlist1 = IF (IsCommaAndName()) 
+               ',' Name Parlist1 | 
+               [',' "..."].    
+    Tableconstructor = '{' [Fieldlist] '}'.
+    Args = '(' [Explist] ')' | Tableconstructor | String.
+    /* In lua 5.1 reference: Fieldlist = Field {Fieldsep Field}. */
+    Fieldlist = Field {Fieldsep Field}.
+    Field = '[' Exp ']' '=' Exp | 
+            IF (IsNameAndEql()) 
+            Name '=' Exp | 
+            Exp.
+
+    Number = Int | Float | Expnum | Hex.
+    String = Normalstring | Longstring.
+    Fieldsep = ',' | ';'.
+    Binop = '+' | '-' | '*' | '/' | '^' | '%' | ".." | '<' | "<=" | '>' | ">=" | "==" | "~=" | "and" | "or".
+    Unop = '-' | "not" | '#'.
+    
+END Lua.
